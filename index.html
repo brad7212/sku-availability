@@ -42,6 +42,11 @@
     .stats{display:flex; gap:14px; flex-wrap:wrap; margin:6px 0 0;}
   .stat{background:var(--stripe); border-radius:10px; padding:10px 16px; font-size:0.85rem; color:var(--muted); border:1px solid var(--border);}
   .stat b{color:var(--ink); font-size:1.05rem; display:block;}
+  .stat.filterable{cursor:pointer; user-select:none; transition:transform .08s ease, box-shadow .15s ease, border-color .15s ease;}
+  .stat.filterable:hover{border-color:var(--accent); box-shadow:0 2px 8px rgba(0,0,0,0.08);}
+  .stat.filterable:active{transform:translateY(1px);}
+  .stat.filterable.active{background:var(--accent); border-color:var(--accent-dark); color:#eaf3f1;}
+  .stat.filterable.active b{color:#fff;}
   table{width:100%; border-collapse:collapse; font-size:0.92rem;}
   th, td{padding:10px 12px; text-align:left; border-bottom:1px solid var(--border);}
   th{color:var(--muted); font-size:0.78rem; text-transform:uppercase; letter-spacing:0.03em; position:sticky; top:0; background:var(--card); border-bottom:2px solid var(--accent);}
@@ -229,6 +234,10 @@ const resultsBody = document.getElementById('resultsBody');
 const emptyState = document.getElementById('emptyState');
 const statsRow = document.getElementById('statsRow');
 
+let lastRows = [];
+let lastTerms = [];
+let activeFilter = null; // null | 'good' | 'warn' | 'bad'
+
 function statusFor(row){
     if(row.total <= 0) return {label:'Out of Stock', cls:'bad'};
   if(row.hq <= 0) return {label:'EX Only', cls:'warn'};
@@ -246,20 +255,18 @@ function highlight(text, term){
   return escapeHtml(text.slice(0,idx)) + '<mark>' + escapeHtml(text.slice(idx, idx+term.length)) + '</mark>' + escapeHtml(text.slice(idx+term.length));
 }
 
-function render(rows, terms){
+function renderTable(rows, terms){
     resultsBody.innerHTML = '';
   if(rows.length === 0){
-    emptyState.textContent = 'No matching SKUs found. Check spelling or try a shorter partial match.';
+    emptyState.textContent = activeFilter
+      ? 'No SKUs match that status within the current results.'
+      : 'No matching SKUs found. Check spelling or try a shorter partial match.';
     emptyState.style.display = 'block';
-    statsRow.style.display = 'none';
     return;
   }
   emptyState.style.display = 'none';
-  let inStock=0, exOnly=0, oos=0, totalUnits=0;
   rows.forEach(row=>{
         const st = statusFor(row);
-        if(st.cls==='good') inStock++; else if(st.cls==='warn') exOnly++; else oos++;
-    totalUnits += row.total;
     const term = terms.find(t => row.sku.toLowerCase().includes(t.toLowerCase())) || '';
     const tr = document.createElement('tr');
     tr.innerHTML = `
@@ -272,14 +279,56 @@ function render(rows, terms){
     `;
     resultsBody.appendChild(tr);
 });
-  statsRow.style.display = 'flex';
+}
+
+function statFilteredRows(){
+  if(!activeFilter) return lastRows;
+  return lastRows.filter(row => statusFor(row).cls === activeFilter);
+}
+
+function renderStats(){
+  let inStock=0, exOnly=0, oos=0, totalUnits=0;
+  lastRows.forEach(row=>{
+    const st = statusFor(row);
+    if(st.cls==='good') inStock++; else if(st.cls==='warn') exOnly++; else oos++;
+    totalUnits += row.total;
+  });
+  const isActive = f => activeFilter===f ? 'active' : '';
   statsRow.innerHTML = `
-    <div class="stat"><b>${rows.length}</b>SKUs matched</div>
-    <div class="stat"><b>${inStock}</b>In stock</div>
-    <div class="stat"><b>${exOnly}</b>EX only (0 at HQ)</div>
-    <div class="stat"><b>${oos}</b>Out of stock</div>
+    <div class="stat filterable ${isActive(null)}" data-filter="">
+      <b>${lastRows.length}</b>SKUs matched</div>
+    <div class="stat filterable ${isActive('good')}" data-filter="good">
+      <b>${inStock}</b>In stock</div>
+    <div class="stat filterable ${isActive('warn')}" data-filter="warn">
+      <b>${exOnly}</b>EX only (0 at HQ)</div>
+    <div class="stat filterable ${isActive('bad')}" data-filter="bad">
+      <b>${oos}</b>Out of stock</div>
     <div class="stat"><b>${totalUnits.toLocaleString()}</b>Total units available</div>
   `;
+  statsRow.querySelectorAll('.stat.filterable').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const f = el.getAttribute('data-filter') || null;
+      activeFilter = (activeFilter === f) ? null : f;
+      renderStats();
+      renderTable(statFilteredRows(), lastTerms);
+    });
+  });
+}
+
+function render(rows, terms){
+  lastRows = rows;
+  lastTerms = terms;
+  activeFilter = null;
+  if(rows.length === 0){
+    resultsBody.innerHTML = '';
+    emptyState.textContent = 'No matching SKUs found. Check spelling or try a shorter partial match.';
+    emptyState.style.display = 'block';
+    statsRow.style.display = 'none';
+    return;
+  }
+  statsRow.style.display = 'flex';
+  renderStats();
+  renderTable(rows, terms);
 }
 
 function parseTerms(raw){
